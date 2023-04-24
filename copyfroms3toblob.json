@@ -1,0 +1,175 @@
+{
+    "contentVersion": "1.0.0.0",
+    "$schema": "https://schema.management.azure.com/schemas/2015-01-01/deploymentTemplate.json#",
+    "parameters": {
+        "S3AccountName": {
+            "type": "string",
+            "metadata": {
+                "description": "Name of the AWS S3 bucket that contains the data to be copied."
+            }
+        },
+        "S3AccountKey": {
+            "type": "securestring",
+            "metadata": {
+                "description": "Key for the AWS S3 bucket."
+            }
+        },
+        "storageAccountName": {
+            "type": "string",
+            "metadata": {
+                "description": "Name of the Azure storage account that contains the data to be copied."
+            }
+        },
+        "storageAccountKey": {
+            "type": "securestring",
+            "metadata": {
+                "description": "Key for the Azure storage account."
+            }
+        },
+        "sourceBlobContainer": {
+            "type": "string",
+            "metadata": {
+                "description": "Name of the blob container in the Azure Storage account."
+            }
+        }
+    },
+    "variables": {
+        "dataFactoryName": "[concat('AmazonS3toAzureBlobDF', uniqueString(resourceGroup().id))]",
+        "AmazonS3LinkedService": "AmazonS3LinkedService",
+        "azureStorageLinkedServiceName": "AzureStorageLinkedService",
+        "S3InputDatasetName": "S3InputDatasetName",
+        "blobOutputDatasetName": "blobOutputDatasetName",
+        "pipelineName": "S3toAzBlobPipeline"
+    },
+    "resources": [
+        {
+            "name": "[variables('dataFactoryName')]",
+            "apiVersion": "2015-10-01",
+            "type": "Microsoft.DataFactory/datafactories",
+            "location": "westus",
+            "resources": [
+                {
+                    "type": "linkedservices",
+                    "name": "[variables('azureStorageLinkedServiceName')]",
+                    "dependsOn": [
+                        "[variables('dataFactoryName')]"
+                    ],
+                    "apiVersion": "2015-10-01",
+                    "properties": {
+                        "type": "AzureStorage",
+                        "description": "Azure Storage linked service",
+                        "typeProperties": {
+                            "connectionString": "[concat('DefaultEndpointsProtocol=https;AccountName=',parameters('storageAccountName'),';AccountKey=',parameters('storageAccountKey'))]"
+                        }
+                    }
+                },
+                {
+                    "type": "linkedservices",
+                    "name": "[variables('AmazonS3LinkedService')]",
+                    "dependsOn": [
+                        "[variables('dataFactoryName')]"
+                    ],
+                    "apiVersion": "2015-10-01",
+                    "properties": {
+                        "type": "AmazonS3",
+                        "description": "AmazonS3 linked service",
+                        "typeProperties": {
+                            "accessKeyId": "[concat(parameters('S3AccountName'))]",
+                            "secretAccessKey": {
+                                "type": "SecureString",
+                                "value": "[concat(parameters('S3AccountKey'))]"
+                            }
+                        }
+                    }
+                },
+                {
+                    "type": "datasets",
+                    "name": "[variables('blobOutputDatasetName')]",
+                    "dependsOn": [
+                        "[variables('dataFactoryName')]",
+                        "[variables('azureStorageLinkedServiceName')]"
+                    ],
+                    "apiVersion": "2015-10-01",
+                    "properties": {
+                        "type": "AzureBlob",
+                        "linkedServiceName": "[variables('azureStorageLinkedServiceName')]",
+                        "typeProperties": {
+                            "folderPath": "[concat(parameters('sourceBlobContainer'), '/')]",
+                            "format": {
+                                "type": "TextFormat",
+                                "columnDelimiter": ","
+                            }
+                        },
+                        "availability": {
+                            "frequency": "Hour",
+                            "interval": 1
+                        },
+                        "external": true
+                    }
+                },
+                {
+                    "type": "datasets",
+                    "name": "[variables('S3InputDatasetName')]",
+                    "dependsOn": [
+                        "[variables('dataFactoryName')]",
+                        "[variables('AmazonS3LinkedService')]"
+                    ],
+                    "apiVersion": "2015-10-01",
+                    "properties": {
+                        "type": "AzureSqlTable",
+                        "linkedServiceName": "[variables('AmazonS3LinkedService')]",
+                        "availability": {
+                            "frequency": "Hour",
+                            "interval": 1
+                        }
+                    }
+                },
+                {
+                    "type": "datapipelines",
+                    "name": "[variables('pipelineName')]",
+                    "dependsOn": [
+                        "[variables('dataFactoryName')]",
+                        "[variables('azureStorageLinkedServiceName')]",
+                        "[variables('AmazonS3LinkedService')]",
+                        "[variables('S3InputDatasetName')]",
+                        "[variables('blobOutputDatasetName')]"
+                    ],
+                    "apiVersion": "2015-10-01",
+                    "properties": {
+                        "activities": [
+                            {
+                                "name": "CopyFromS3ToAzureBlob",
+                                "description": "Copy data S3ToAzureBlob",
+                                "type": "Copy",
+                                "inputs": [
+                                    {
+                                        "name": "[variables('S3InputDatasetName')]"
+                                    }
+                                ],
+                                "outputs": [
+                                    {
+                                        "name": "[variables('blobOutputDatasetName')]"
+                                    }
+                                ],
+                                "typeProperties": {
+                                    "source": {
+                                        "type": "BlobSource"
+                                    },
+                                    "sink": {
+                                        "type": "S3sink"
+                                    }
+                                },
+                                "Policy": {
+                                    "concurrency": 1,
+                                    "executionPriorityOrder": "NewestFirst",
+                                    "retry": 3,
+                                    "timeout": "01:00:00"
+                                }
+                            }
+                        ]
+                    }
+                }
+            ]
+        }
+    ]
+}
